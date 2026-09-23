@@ -4,9 +4,10 @@ setup(
     name='Lasagna',
     version='0.1',
     packages=find_packages(),
+    py_modules=['mainWindow_rc'],
     include_package_data=True,
     install_requires=[
-        'pyqt5==5.15.6',
+        'pyqt5>=5.15.6',
         'numpy',
         'tifffile',
         'pynrrd',
