@@ -22,6 +22,81 @@ from lasagna.utils.lasagna_qt_helper_functions import (
 )
 
 
+_CHANNEL_OPTIONS = ['gray', 'red', 'green', 'blue', 'magenta', 'cyan', 'yellow']
+
+# Substrings (lowercased) that map to a channel name.  Checked in order so
+# longer/more-specific tokens should come first.
+_FILENAME_CHANNEL_HINTS = [
+    ('magenta', 'magenta'), ('mag',  'magenta'),
+    ('yellow',  'yellow'),  ('yel',  'yellow'),
+    ('cyan',    'cyan'),    ('cy',   'cyan'),
+    ('green',   'green'),   ('gr',   'green'),  ('gre', 'green'),
+    ('blue',    'blue'),    ('bl',   'blue'),
+    ('red',     'red'),     ('rd',   'red'),
+    ('gray',    'gray'),    ('grey', 'gray'),   ('gy',  'gray'),
+]
+
+
+def _lut_from_filename(fname):
+    """Return a channel name inferred from the file's basename, or None."""
+    stem = os.path.splitext(os.path.basename(fname))[0].lower()
+    for token, channel in _FILENAME_CHANNEL_HINTS:
+        if token in stem:
+            return channel
+    return None
+
+
+class ChannelAssignDialog(QtWidgets.QDialog):
+    """Dialog shown after multi-file selection -- lets the user assign a color
+    channel to each file before loading."""
+
+    def __init__(self, fnames, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Assign color channels")
+        self.setMinimumWidth(520)
+
+        color_order = preferences.readPreference('colorOrder') or _CHANNEL_OPTIONS
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(QtWidgets.QLabel(
+            "Choose a color channel for each file:"))
+
+        grid = QtWidgets.QGridLayout()
+        grid.addWidget(QtWidgets.QLabel("<b>File</b>"), 0, 0)
+        grid.addWidget(QtWidgets.QLabel("<b>Channel</b>"), 0, 1)
+
+        self._combos = []
+        for row, fname in enumerate(fnames, start=1):
+            lbl = QtWidgets.QLabel(os.path.basename(fname))
+            lbl.setToolTip(fname)
+            combo = QtWidgets.QComboBox()
+            for ch in _CHANNEL_OPTIONS:
+                combo.addItem(ch.capitalize(), ch)
+            # Prefer a channel inferred from the filename; fall back to colorOrder.
+            inferred = _lut_from_filename(fname)
+            if inferred and inferred in _CHANNEL_OPTIONS:
+                default = inferred
+            else:
+                default = color_order[(row - 1) % len(color_order)]
+            idx = _CHANNEL_OPTIONS.index(default) if default in _CHANNEL_OPTIONS else 0
+            combo.setCurrentIndex(idx)
+            grid.addWidget(lbl, row, 0)
+            grid.addWidget(combo, row, 1)
+            self._combos.append(combo)
+
+        layout.addLayout(grid)
+
+        btn_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+    def channel_choices(self):
+        """Return list of lut strings matching the original fnames order."""
+        return [c.currentData() for c in self._combos]
+
+
 class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
     def __init__(self, embed_console=False, parent=None):
         """
@@ -237,6 +312,16 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
         self.actionQuit.triggered.connect(self.quitLasagna)
         self.actionAbout.triggered.connect(self.about_slot)
 
+        # Keyboard shortcuts
+        self.actionOpen.setShortcut('Ctrl+O')
+        self.actionQuit.setShortcut('Ctrl+Q')
+
+        # "Open multiple stacks..." menu item (Ctrl+Shift+O)
+        self.actionOpenMultiple = QtWidgets.QAction("Open &multiple stacks...", self)
+        self.actionOpenMultiple.setShortcut('Ctrl+Shift+O')
+        self.actionOpenMultiple.triggered.connect(self.showMultiStackLoadDialog)
+        self.menuLoad_ingredient.insertAction(self.actionOpen, self.actionOpenMultiple)
+
         # Link toolbar signals to slots
         self.actionResetAxes.triggered.connect(self.resetAxes)
 
@@ -438,9 +523,10 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     # File menu and methods associated with loading the base image stack.
-    def loadImageStack(self, fnameToLoad):
+    def loadImageStack(self, fnameToLoad, lut=None):
         """
-        Loads an image image stack.
+        Loads an image stack.  If ``lut`` is given (e.g. 'red', 'green') it
+        overrides the automatic colorOrder assignment for this stack.
         """
         self.runHook(self.hooks["loadImageStack_Start"])
 
@@ -477,18 +563,24 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
         self.returnIngredientByName(obj_name).addToPlots()
 
         # If only one stack is present, we will display it as gray (see imagestack class)
-        # if more than one stack has been added, we will colour successive stacks according
-        # to the colorOrder preference in the parameter file
-        stacks = self.stacksInTreeList()
-        color_order = preferences.readPreference("colorOrder")
+        # Assign LUT.  When an explicit lut is provided (multi-file load with
+        # user-chosen channel), use it directly and skip the auto-assignment so
+        # that previously loaded stacks are not re-coloured.
+        if lut is not None:
+            self.returnIngredientByName(obj_name).lut = lut
+        else:
+            # if more than one stack is present, colour successive stacks
+            # according to the colorOrder preference in the parameter file
+            stacks = self.stacksInTreeList()
+            color_order = preferences.readPreference("colorOrder")
 
-        if len(stacks) == 2:
-            self.returnIngredientByName(stacks[0]).lut = color_order[0]
-            self.returnIngredientByName(stacks[1]).lut = color_order[1]
-        elif len(stacks) > 2:
-            self.returnIngredientByName(stacks[len(stacks) - 1]).lut = color_order[
-                len(stacks) - 1
-            ]
+            if len(stacks) == 2:
+                self.returnIngredientByName(stacks[0]).lut = color_order[0]
+                self.returnIngredientByName(stacks[1]).lut = color_order[1]
+            elif len(stacks) > 2:
+                self.returnIngredientByName(stacks[len(stacks) - 1]).lut = color_order[
+                    len(stacks) - 1
+                ]
 
         # remove any existing range highlighter on the histogram. We do this because different images
         # will likely have different default ranges
@@ -524,6 +616,36 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
             self.statusBar.showMessage("Unable to find " + str(fname))
 
         self.runHook(self.hooks["showStackLoadDialog_End"])
+
+    def showMultiStackLoadDialog(self):
+        """Open multiple image stacks at once, letting the user choose a color
+        channel for each one before loading."""
+        start_dir = preferences.readPreference('lastLoadDir') or ''
+        fnames, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self,
+            "Open image stacks",
+            start_dir,
+            image_stack_loader.image_filter(),
+        )
+        if not fnames:
+            return
+
+        # Remember the directory for next time.
+        import os as _os
+        preferences.preferenceWriter('lastLoadDir',
+                                     _os.path.dirname(fnames[0]) + _os.sep)
+
+        dlg = ChannelAssignDialog(fnames, parent=self)
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+
+        choices = dlg.channel_choices()
+        for fname, lut in zip(fnames, choices):
+            if _os.path.isfile(fname):
+                self.loadImageStack(fname, lut=lut)
+            else:
+                self.statusBar.showMessage("Unable to find " + fname)
+        self.initialiseAxes()
 
     # -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
     # Code to handle generic file loading, dialogs, etc

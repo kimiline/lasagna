@@ -5,10 +5,11 @@ This class defines the basic imagestack and instructs lasagna as to how to handl
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt5 import QtGui, QtCore
+from PyQt5 import QtGui, QtCore, QtWidgets
 
 from lasagna.ingredients.lasagna_ingredient import lasagna_ingredient
 from lasagna.io_libs.image_stack_loader import save_stack
+from lasagna.utils import preferences
 
 
 class imagestack(lasagna_ingredient):
@@ -291,9 +292,13 @@ class imagestack(lasagna_ingredient):
 
     def save(self, path=None):
         if path is None:
-            path = QtWidgets.QFileDialog.getSaveFileName(
-                self.parent, "File to save {}".format(self.objectName)
+            import os
+            start_dir = preferences.readPreference('lastLoadDir') or ''
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self.parent, "File to save {}".format(self.objectName), start_dir
             )
+            if path:
+                preferences.preferenceWriter('lastLoadDir', os.path.dirname(path) + os.sep)
         if not path:
             return
         save_stack(path, self.raw_data())

@@ -130,11 +130,16 @@ class sparsepoints(lasagna_ingredient):
         """Save sparse point in "pts" format (basic coordinates, space separated)"""
         fname = self.objectName + '.csv'
         if path is None:
+            start_dir = preferences.readPreference('lastLoadDir') or ''
             path, _ = QtWidgets.QFileDialog.getSaveFileName(
-                self.parent, "File to save %s" % fname, fname
+                self.parent, "File to save %s" % fname,
+                start_dir + fname
             )
             # getSaveFileName also returns the selected filter "All file (*)" for instance.
             # Ignore the second output
+            if path:
+                import os
+                preferences.preferenceWriter('lastLoadDir', os.path.dirname(path) + os.sep)
         if not path:
             return
         with open(path, "w") as F:

@@ -18,6 +18,9 @@ class LoaderDialog(QtWidgets.QDialog, Ui_LoadPointDialog):
                                                     preferences.readPreference('lastLoadDir'),
                                                     self.fileFilter)[0]
         # getOpenFileNames returns a tuple of (file_list, filter). Ignore the filter
+        if fnames:
+            import os
+            preferences.preferenceWriter('lastLoadDir', os.path.dirname(fnames[0]) + os.sep)
         self.FileListTextEdit.setText('\n'.join(fnames))
 
     def get_results(self):
