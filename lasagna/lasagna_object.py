@@ -24,6 +24,23 @@ from lasagna.utils.lasagna_qt_helper_functions import (
 
 _CHANNEL_OPTIONS = ['gray', 'red', 'green', 'blue', 'magenta', 'cyan', 'yellow']
 
+# Allen CCF grids as Lasagna holds them after loading (AP, ML, DV), keyed to voxel size in um
+_CCF_GRID_SHAPES = {
+    (1320, 1140, 800): 10,
+    (528, 456, 320): 25,
+    (264, 228, 160): 50,
+    (132, 114, 80): 100,
+}
+
+_FLIP_BUTTON_LABELS = {
+    'generic': [("Flip axis 1", "Flip image axis 1 (top-right X, bottom-left Y)"),
+                ("Flip axis 2", "Flip image axis 2 (top-left X, bottom-left X)"),
+                ("Flip axis 3", "Flip image axis 3 (top-left Y, top-right Y)")],
+    'ccf': [("Flip A-P", "Flip anterior-posterior in the sagittal and horizontal views"),
+            ("Flip L-R", "Flip left-right in the coronal and horizontal views"),
+            ("Flip D-V", "Flip dorsal-ventral in the coronal and sagittal views")],
+}
+
 # Substrings (lowercased) that map to a channel name.  Checked in order so
 # longer/more-specific tokens should come first.
 _FILENAME_CHANNEL_HINTS = [
@@ -393,6 +410,7 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
         self.pushButton_FlipView1.released.connect(lambda: self.flipAxis_Slot(0))
         self.pushButton_FlipView2.released.connect(lambda: self.flipAxis_Slot(1))
         self.pushButton_FlipView3.released.connect(lambda: self.flipAxis_Slot(2))
+        self._set_flip_button_labels('generic')
 
         # Plugins menu and initialisation
         # 1. Get a list of all plugins in the plugins path and add their directories to the Python path
@@ -561,6 +579,18 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
 
         # Add item to all three 2D plots
         self.returnIngredientByName(obj_name).addToPlots()
+
+        if tuple(loaded_image_stack.shape) in _CCF_GRID_SHAPES:
+            self._set_flip_button_labels('ccf')
+            if len(self.stacksInTreeList()) == 1:
+                # Same convention as IBL's alignment GUI: CCF-space TIFFs (brainreg / STD_ds)
+                # are stored posterior-first; NRRDs are anterior-first.
+                ap_reversed = fnameToLoad.lower().endswith(('.tif', '.tiff'))
+                self._apply_surgeon_view(ap_reversed)
+                self.statusBar.showMessage(
+                    "CCF-space stack: showing surgeon's view (horizontal anterior up, right on right; "
+                    "sagittal anterior right). Assumes a %s-first %s file."
+                    % ("posterior" if ap_reversed else "anterior", "TIFF" if ap_reversed else "non-TIFF"))
 
         # If only one stack is present, we will display it as gray (see imagestack class)
         # Assign LUT.  When an explicit lut is provided (multi-file load with
@@ -1121,6 +1151,29 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
             return
 
         self.axes2D[2].view.setAspectLocked(True, float(textBoxVal))
+
+    def _set_flip_button_labels(self, kind):
+        buttons = [self.pushButton_FlipView1, self.pushButton_FlipView2, self.pushButton_FlipView3]
+        for button, (text, tip) in zip(buttons, _FLIP_BUTTON_LABELS[kind]):
+            button.setText(text)
+            button.setToolTip(tip)
+
+    def _apply_surgeon_view(self, ap_reversed):
+        """
+        Lab standard for CCF-registered stacks: coronal dorsal up / right on right,
+        sagittal anterior on the right, horizontal anterior up / right on right.
+        Display-only, like flipAxis_Slot, so traced points are unaffected.
+        ap_reversed: the stack's AP index 0 is posterior (true for brainreg / STD_ds TIFFs).
+        """
+        # (invertX, invertY) for panels: coronal, sagittal (x = AP), horizontal (y = AP)
+        if ap_reversed:
+            views = ((False, True), (False, True), (False, False))
+        else:
+            views = ((False, True), (True, True), (False, True))
+        for ax, (invert_x, invert_y) in zip(self.axes2D, views):
+            vb = ax.view.getViewBox()
+            vb.invertX(invert_x)
+            vb.invertY(invert_y)
 
     def flipAxis_Slot(self, axisToFlip):
         """
