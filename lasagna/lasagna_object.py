@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import qApp, QMainWindow
 
 from lasagna import lasagna_mainWindow, lasagna_axis, ingredients
 from lasagna.io_libs import image_stack_loader
+from lasagna.ingredients.lasagna_ingredient import ROW_BACKGROUND
 from lasagna.plugins import plugin_handler
 from lasagna.utils import preferences, path_utils
 from lasagna.utils.lasagna_qt_helper_functions import (
@@ -370,6 +371,14 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
         self.points_Model = QtGui.QStandardItemModel(self.points_TreeView)
         self.points_Model.setHorizontalHeaderLabels(["Name"])
         self.points_TreeView.setModel(self.points_Model)
+        self.points_TreeView.setStyleSheet(
+            "QTreeView { background-color: rgb%s; }" % (ROW_BACKGROUND,))
+        self.registerAlyx_button = QtWidgets.QPushButton("Register tracks to Alyx...")
+        self.registerAlyx_button.setToolTip(
+            "Open the Alyx registration window to review saved _pts.csv tracks and upload the ones you tick")
+        self.registerAlyx_button.clicked.connect(self.launchAlyxRegistration)
+        self.verticalLayout_5.insertWidget(
+            self.verticalLayout_5.indexOf(self.points_TreeView) + 1, self.registerAlyx_button)
         self.points_TreeView.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.points_TreeView.customContextMenuRequested.connect(self.layersMenuPoints)
         self.points_TreeView.selectionModel().selectionChanged[
@@ -1087,6 +1096,43 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
             ingredient.save()
         else:
             print('No save method for "{}"'.format(obj_name))
+
+    def launchAlyxRegistration(self):
+        """Start register_tracks_alyx.py in the IBL environment, on the folder of the last saved tracks."""
+        import subprocess
+
+        python = preferences.readPreference('alyxRegisterPython') or ''
+        script = preferences.readPreference('alyxRegisterScript') or ''
+        if not os.path.isfile(python):
+            env = os.path.join('envs', 'iblenv3.11')
+            guess = (os.path.join(os.path.expanduser('~'), 'anaconda3', env, 'python.exe') if os.name == 'nt'
+                     else os.path.join('/opt/anaconda3', env, 'bin', 'python'))
+            python, _ = QtWidgets.QFileDialog.getOpenFileName(
+                self, "Choose the python of the IBL environment (e.g. iblenv3.11)",
+                guess if os.path.isfile(guess) else os.path.expanduser('~'))
+            if not python:
+                return
+            preferences.preferenceWriter('alyxRegisterPython', python)
+        if not os.path.isfile(script):
+            script, _ = QtWidgets.QFileDialog.getOpenFileName(
+                self, "Choose register_tracks_alyx.py (in your ibl-probe-tools folder)",
+                os.path.expanduser('~'), "Python (register_tracks_alyx.py *.py)")
+            if not script:
+                return
+            preferences.preferenceWriter('alyxRegisterScript', script)
+
+        cmd = [python, script]
+        folder = preferences.readPreference('lastLoadDir') or ''
+        if os.path.isdir(folder):
+            cmd += ['--folder', folder]
+        try:
+            subprocess.Popen(cmd, cwd=os.path.dirname(script))
+            self.statusBar.showMessage("Opening the Alyx registration window...")
+        except OSError as e:
+            QtWidgets.QMessageBox.warning(
+                self, "Could not start registration",
+                "%s\n\nCheck the python and script paths (alyxRegisterPython / alyxRegisterScript in "
+                "~/.lasagna/lasagna_prefs.yml)." % e)
 
     def deleteLayerPoints_Slot(self):
         """

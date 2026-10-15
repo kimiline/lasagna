@@ -10,6 +10,10 @@ define interactions between the data and Lasagna.
 import os
 from PyQt5 import QtGui, QtCore
 
+ROW_BACKGROUND = (224, 224, 224)
+_ROW_TEXT = (20, 20, 20)
+_SWATCH_EDGE = (60, 60, 60)
+
 
 class lasagna_ingredient(object):
     '''
@@ -132,25 +136,15 @@ class lasagna_ingredient(object):
             print("** lasagna_ingredient -- can not set color")
             return
 
-        # Set the text color
-        basil = QtGui.QBrush()
-        basil.setStyle(QtCore.Qt.BrushStyle(1))
-        QC = QtGui.QColor(int(self.color[0]), int(self.color[1]), int(self.color[2]))
-        basil.setColor(QC)
-
-        # If the text is too light, we set the background to this color instead of the foreground
-        HSL = QC.getHsl()
-
-        if HSL[2] > 170:
-            #Light background with dark text
-            self.modelItems.setBackground(basil)
-            basil = QtGui.QBrush()
-            basil.setColor(QtGui.QColor(0,0,0))
-            self.modelItems.setForeground(basil)
-        else:
-            # Colored text with white background
-            self.modelItems.setForeground(basil)
-            basil = QtGui.QBrush()
-            basil.setColor(QtGui.QColor(255,255,255))
-            self.modelItems.setBackground(basil)
+        # Dark name text on a uniform light gray row; the layer color is shown as a square
+        # icon, because no single background keeps every plot color readable as text.
+        swatch = QtGui.QPixmap(14, 14)
+        swatch.fill(QtGui.QColor(*[int(c) for c in self.color[:3]]))
+        painter = QtGui.QPainter(swatch)
+        painter.setPen(QtGui.QColor(*_SWATCH_EDGE))
+        painter.drawRect(0, 0, 13, 13)
+        painter.end()
+        self.modelItems.setIcon(QtGui.QIcon(swatch))
+        self.modelItems.setForeground(QtGui.QBrush(QtGui.QColor(*_ROW_TEXT)))
+        self.modelItems.setBackground(QtGui.QBrush(QtGui.QColor(*ROW_BACKGROUND)))
 

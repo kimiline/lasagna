@@ -39,6 +39,8 @@ def defaultPreferences():
             'defaultSymbolSize': 8,
             'hideZoomResetButtonOnImageAxes': True,
             'hideAxes': True,
+            'alyxRegisterPython': '',   # python of the IBL env that runs register_tracks_alyx.py
+            'alyxRegisterScript': '',   # path to register_tracks_alyx.py (ibl-probe-tools)
             }
 
 
