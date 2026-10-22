@@ -30,11 +30,11 @@ class plugin(LasagnaPlugin, QtWidgets.QWidget, add_line_UI.Ui_addLine):
 
         # Create widgets defined in the designer file
         self.setupUi(self)
-        self.show()
+        self.embedInPointsTab()
         self.name_lineEdit.setText("ManualLine")
 
-        # Set up the close button by linking it to the same slot as the normal window close button
-        self.closeButton.released.connect(self.closePlugin)
+        # The close button does what unchecking the plugin in the menu does
+        self.closeButton.released.connect(self.requestClose)
         self.num_points = 0  # The number of points added see self.hook_axisClicked()
         self.numPoints_textLabel.setText("n pts: %d" % self.num_points)
 
@@ -93,6 +93,26 @@ class plugin(LasagnaPlugin, QtWidgets.QWidget, add_line_UI.Ui_addLine):
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     # The following methods are involved in shutting down the plugin window
+    def embedInPointsTab(self):
+        """
+        Put this widget in the free space at the bottom of the Points tab rather than in a window
+        of its own, where it gets hidden behind other windows.
+        """
+        layout = self.lasagna.verticalLayout_5
+        last = layout.count() - 1
+        # The tab ends in an expanding spacer: sit above it and take over the space it was holding
+        position = last if layout.itemAt(last).spacerItem() is not None else layout.count()
+        layout.insertWidget(position, self, 1)
+        self.lasagna.tabWidget.setCurrentWidget(self.lasagna.pointsSettingsTab)
+
+        # The points list is fixed at 281 px tall, which leaves too little room for this panel on a
+        # laptop screen. Let it shrink while the panel is open (restored in closePlugin).
+        tree = self.lasagna.points_TreeView
+        self._tree_min_height = tree.minimumHeight()
+        self._tree_size_policy = tree.sizePolicy()
+        tree.setMinimumHeight(140)
+        tree.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+
     def closePlugin(self):
         """
         This method is called by lasagna when the user unchecks the plugin in the menu.
@@ -101,19 +121,21 @@ class plugin(LasagnaPlugin, QtWidgets.QWidget, add_line_UI.Ui_addLine):
         self.lasagna.removeIngredientByName(self.line_name)
         self.lasagna.removeIngredientByName(self.hPoint_name)
         self.detachHooks()
-        self.close()
+        self.lasagna.verticalLayout_5.removeWidget(self)
+        tree = self.lasagna.points_TreeView
+        tree.setMinimumHeight(self._tree_min_height)
+        tree.setSizePolicy(self._tree_size_policy)
+        self.hide()
+        self.deleteLater()
 
-    # We define this here because we can't assume all plugins will have QWidget::closeEvent
-    def closeEvent(self, event):
+    def requestClose(self):
         """
-        This event is executed when the user presses the close window (cross) button in the title bar
+        Runs when the user presses this plugin's Close button
         """
-        self.lasagna.stopPlugin(self.__module__)  # This will call self.closePlugin
         self.lasagna.pluginActions[self.__module__].setChecked(
             False
         )  # Uncheck the menu item associated with this plugin's name
-        self.deleteLater()
-        event.accept()
+        self.lasagna.stopPlugin(self.__module__)  # This will call self.closePlugin
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     # Hooks for integration with the main Lasagna GUI via methods in lasagna_object

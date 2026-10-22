@@ -379,6 +379,22 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
         self.registerAlyx_button.clicked.connect(self.launchAlyxRegistration)
         self.verticalLayout_5.insertWidget(
             self.verticalLayout_5.indexOf(self.points_TreeView) + 1, self.registerAlyx_button)
+        # Ctrl/Shift-click selects several layers; the settings below then apply to all of them
+        self.points_TreeView.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.pointsOpen_button = QtWidgets.QPushButton("Open...")
+        self.pointsOpen_button.setToolTip("Load points: opens the sparse point reader")
+        self.pointsClose_button = QtWidgets.QPushButton("Close")
+        self.pointsClose_button.setToolTip("Close the selected points layers")
+        self.pointsCloseAll_button = QtWidgets.QPushButton("Close all")
+        self.pointsCloseAll_button.setToolTip("Close every points layer")
+        self.pointsOpen_button.clicked.connect(self.openPointsLayers_Slot)
+        self.pointsClose_button.clicked.connect(self.deleteLayerPoints_Slot)
+        self.pointsCloseAll_button.clicked.connect(self.closeAllPointsLayers_Slot)
+        pointsButtons = QtWidgets.QHBoxLayout()
+        for button in (self.pointsOpen_button, self.pointsClose_button, self.pointsCloseAll_button):
+            pointsButtons.addWidget(button)
+        self.verticalLayout_5.insertLayout(
+            self.verticalLayout_5.indexOf(self.points_TreeView) + 1, pointsButtons)
         self.points_TreeView.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.points_TreeView.customContextMenuRequested.connect(self.layersMenuPoints)
         self.points_TreeView.selectionModel().selectionChanged[
@@ -1019,41 +1035,36 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
 
     def markerSymbol_comboBox_slot(self, index):
         symbol = str(self.markerSymbol_comboBox.currentText())
-        ingredient = self.returnIngredientByName(self.selectedPointsName())
-        if not ingredient:
-            return
-        ingredient.symbol = symbol
+        for ingredient in self.selectedPointsIngredients():
+            ingredient.symbol = symbol
         self.update_2D_plot_ingredients_in_axes()
 
     def markerSize_spinBox_slot(self, spinBoxValue):
-        ingredient = self.returnIngredientByName(self.selectedPointsName())
-        if not ingredient:
-            return
-        ingredient.symbolSize = spinBoxValue
+        for ingredient in self.selectedPointsIngredients():
+            ingredient.symbolSize = spinBoxValue
         self.update_2D_plot_ingredients_in_axes()
 
     def markerAlpha_spinBox_slot(self, spinBoxValue):
-        ingredient = self.returnIngredientByName(self.selectedPointsName())
-        if not ingredient:
-            return
-        ingredient.alpha = spinBoxValue
+        for ingredient in self.selectedPointsIngredients():
+            ingredient.alpha = spinBoxValue
         self.update_2D_plot_ingredients_in_axes()
 
     def lineWidth_spinBox_slot(self, spinBoxValue):
-        ingredient = self.returnIngredientByName(self.selectedPointsName())
-        if not ingredient:
-            return
-        ingredient.lineWidth = spinBoxValue
+        for ingredient in self.selectedPointsIngredients():
+            ingredient.lineWidth = spinBoxValue
         self.update_2D_plot_ingredients_in_axes()
 
     def markerColor_pushButton_slot(self):
-        ingredient = self.returnIngredientByName(self.selectedPointsName())
-        if not ingredient:
+        ingredients = self.selectedPointsIngredients()
+        if not ingredients:
             return
 
         col = QtWidgets.QColorDialog.getColor()
+        if not col.isValid():  # dialog cancelled
+            return
         rgb = [col.toRgb().red(), col.toRgb().green(), col.toRgb().blue()]
-        ingredient.color = rgb
+        for ingredient in ingredients:
+            ingredient.color = rgb
         self.update_2D_plot_ingredients_in_axes()
 
     def selectedPointsName(self):
@@ -1072,6 +1083,21 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
 
         return self.points_TreeView.selectedIndexes()[0].data()
 
+    def selectedPointsNames(self):
+        """
+        Return the names of all selected points ingredients (empty list if the list is empty).
+        """
+        if self.selectedPointsName() is False:
+            return []
+        return [index.data() for index in self.points_TreeView.selectedIndexes()]
+
+    def selectedPointsIngredients(self):
+        """
+        Return the ingredient objects for all selected points layers
+        """
+        ingredients = [self.returnIngredientByName(name) for name in self.selectedPointsNames()]
+        return [ingredient for ingredient in ingredients if ingredient]
+
     # The remaining methods for this tab are involved in building a context menu on right-click
     def layersMenuPoints(self, position):
         """
@@ -1089,13 +1115,13 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
         menu.exec_(self.points_TreeView.viewport().mapToGlobal(position))
 
     def saveLayerPoints_Slot(self):
-        """call ingredient save method if any"""
-        obj_name = self.selectedPointsName()
-        ingredient = self.returnIngredientByName(obj_name)
-        if hasattr(ingredient, "save"):
-            ingredient.save()
-        else:
-            print('No save method for "{}"'.format(obj_name))
+        """call the save method, if any, of each selected ingredient"""
+        for obj_name in self.selectedPointsNames():
+            ingredient = self.returnIngredientByName(obj_name)
+            if hasattr(ingredient, "save"):
+                ingredient.save()
+            else:
+                print('No save method for "{}"'.format(obj_name))
 
     def launchAlyxRegistration(self):
         """Start register_tracks_alyx.py in the IBL environment, on the folder of the last saved tracks."""
@@ -1136,11 +1162,39 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
 
     def deleteLayerPoints_Slot(self):
         """
-        Remove a points ingredient and list item
+        Remove the selected points ingredients and list items. Closing a layer discards unsaved
+        points, so several at once are confirmed.
         """
-        obj_name = self.selectedPointsName()
-        self.removeIngredientByName(obj_name)
-        print(("removed " + obj_name))
+        names = self.selectedPointsNames()
+        if len(names) > 1 and not self._confirmClosePoints(len(names)):
+            return
+        for obj_name in names:
+            self.removeIngredientByName(obj_name)
+            print(("removed " + obj_name))
+
+    def closeAllPointsLayers_Slot(self):
+        """Remove every ingredient in the points list"""
+        names = [self.points_Model.item(row, 0).text() for row in range(self.points_Model.rowCount())]
+        if not names or not self._confirmClosePoints(len(names), "all %d" % len(names)):
+            return
+        for obj_name in names:
+            self.removeIngredientByName(obj_name)
+            print(("removed " + obj_name))
+
+    def _confirmClosePoints(self, count, what=None):
+        answer = QtWidgets.QMessageBox.question(
+            self, "Close points layers",
+            "Close %s points layers? Unsaved points in them will be lost." % (what or count),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No)
+        return answer == QtWidgets.QMessageBox.Yes
+
+    def openPointsLayers_Slot(self):
+        """Go to the sparse point reader's load dialog"""
+        reader = self.loadActions.get('sparse_point_reader')
+        if reader is None:
+            self.statusBar.showMessage("The sparse point reader plugin is not loaded")
+            return
+        reader.showLoadDialog()
 
     def pointsLayers_TreeView_slot(self):
         """
@@ -1154,13 +1208,16 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
         if not ingredient:
             return
 
-        # Assign GUI values based on what is stored in the ingredient
-        if isinstance(ingredient.symbolSize, int):
-            self.markerSize_spinBox.setValue(ingredient.symbolSize)
-        if isinstance(ingredient.alpha, int):
-            self.markerAlpha_spinBox.setValue(ingredient.alpha)
-        if isinstance(ingredient.lineWidth, int):
-            self.lineWidth_spinBox.setValue(ingredient.lineWidth)
+        # Assign GUI values based on what is stored in the ingredient. Signals are blocked because
+        # the spinbox slots write to every selected layer, so this would copy the first layer's
+        # values onto the rest of a multi-selection.
+        for spinBox, value in ((self.markerSize_spinBox, ingredient.symbolSize),
+                               (self.markerAlpha_spinBox, ingredient.alpha),
+                               (self.lineWidth_spinBox, ingredient.lineWidth)):
+            if isinstance(value, int):
+                spinBox.blockSignals(True)
+                spinBox.setValue(value)
+                spinBox.blockSignals(False)
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     # Slots for axis tab
