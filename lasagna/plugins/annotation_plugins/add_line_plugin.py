@@ -20,7 +20,7 @@ from PyQt5 import QtGui, QtWidgets
 from lasagna.io_libs.sparse_point_io import read_lasagna_pts
 from lasagna.plugins.lasagna_plugin import LasagnaPlugin
 from lasagna.plugins.annotation_plugins import add_line_UI
-from lasagna.utils import preferences
+from lasagna.utils import navigation, preferences
 
 
 class plugin(LasagnaPlugin, QtWidgets.QWidget, add_line_UI.Ui_addLine):
@@ -42,6 +42,16 @@ class plugin(LasagnaPlugin, QtWidgets.QWidget, add_line_UI.Ui_addLine):
         self.verticalLayout.insertWidget(
             self.verticalLayout.indexOf(self.add_pushButton), self.load_pushButton
         )
+
+        # Selecting a row in the table marks that point; this box also moves the views to it
+        self.jump_checkBox = QtWidgets.QCheckBox("&Jump to selected point", self.layoutWidget)
+        self.jump_checkBox.setChecked(True)
+        self.jump_checkBox.setToolTip("Move the three views to the point selected in the table")
+        self.verticalLayout.insertWidget(
+            self.verticalLayout.indexOf(self.fitType_comboBox) + 1, self.jump_checkBox
+        )
+        self.tableWidget.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.tableWidget.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.embedInPointsTab()
         self.name_lineEdit.setText("ManualLine")
 
@@ -80,6 +90,16 @@ class plugin(LasagnaPlugin, QtWidgets.QWidget, add_line_UI.Ui_addLine):
         self.lasagna.returnIngredientByName(self.hPoint_name).symbolSize = 9
         self.lasagna.returnIngredientByName(self.hPoint_name).symbol = "s"
 
+        # 4. Add a sparse point that redraws the point selected in the table on top of itself in
+        #    another colour (a points layer has a single colour). It is separate from the highlight
+        #    point, which sets where the next clicked point is inserted.
+        self.selPoint_name = "addLine_selectedPoint"
+        self.lasagna.addIngredient(
+            objectName=self.selPoint_name, kind="sparsepoints", data=[]
+        )
+
+        self.lasagna.returnIngredientByName(self.selPoint_name).addToPlots()
+
         self.nearest_point_index = 0  # The index of the point nearest the mouse cursor
         self.coords_of_nearest_point_to_cursor = []
         self.fit = {}  # The line fit to the sparse points
@@ -99,6 +119,8 @@ class plugin(LasagnaPlugin, QtWidgets.QWidget, add_line_UI.Ui_addLine):
         self.clear_pushButton.clicked.connect(self.clear_line)
         self.add_pushButton.clicked.connect(self.add_line)
         self.load_pushButton.clicked.connect(self.load_points_dialog)
+        self.tableWidget.itemSelectionChanged.connect(self.show_selected_point)
+        self.jump_checkBox.toggled.connect(self.show_selected_point)
         self.addPoint_radioButton.toggled.connect(self.addRemoveToggle)
         self.fitType_comboBox.activated.connect(self.fit_and_display_line)
         # TODO: trigger off an edit signal not item changed
@@ -133,6 +155,7 @@ class plugin(LasagnaPlugin, QtWidgets.QWidget, add_line_UI.Ui_addLine):
         self.lasagna.removeIngredientByName(self.pts_name)
         self.lasagna.removeIngredientByName(self.line_name)
         self.lasagna.removeIngredientByName(self.hPoint_name)
+        self.lasagna.removeIngredientByName(self.selPoint_name)
         self.detachHooks()
         self.lasagna.verticalLayout_5.removeWidget(self)
         tree = self.lasagna.points_TreeView
@@ -218,6 +241,9 @@ class plugin(LasagnaPlugin, QtWidgets.QWidget, add_line_UI.Ui_addLine):
 
         elif self.removePoint_radioButton.isChecked():
             self.num_points -= 1
+            if self.nearest_point_index in {index.row() for index in self.tableWidget.selectedIndexes()}:
+                # Qt would select the next row, moving the views there; drop the selection instead
+                self.tableWidget.setCurrentCell(-1, -1)
             self.tableWidget.removeRow(self.nearest_point_index)
             self.lasagna.returnIngredientByName(self.hPoint_name)._data = []
 
@@ -371,6 +397,43 @@ class plugin(LasagnaPlugin, QtWidgets.QWidget, add_line_UI.Ui_addLine):
         self.update_current_line()
         print("Loaded %d points from %s" % (self.num_points, path))
         return True
+
+    def selected_point(self):
+        """The point in the selected table row as [Z, X, Y], or None if no single row is selected"""
+        rows = {index.row() for index in self.tableWidget.selectedIndexes()}
+        if len(rows) != 1:
+            return None
+        row = rows.pop()
+        try:
+            return [int(self.tableWidget.item(row, col).text()) for col in range(3)]
+        except (AttributeError, ValueError):  # An empty or non-numeric cell
+            return None
+
+    def show_selected_point(self, *args):
+        """Mark the point selected in the table and, if "Jump to selected point" is ticked,
+        move the three views to it
+        """
+        point = self.selected_point()
+        marker = self.lasagna.returnIngredientByName(self.selPoint_name)
+        if not marker:  # The plugin is closing
+            return
+        marker._data = [] if point is None else np.array([point])
+        self.match_marker_to_line(marker)
+
+        if point is not None and self.jump_checkBox.isChecked():
+            navigation.jump_to_point(self.lasagna, point)
+        else:
+            self.lasagna.update_2D_plot_ingredients_in_axes()
+
+    def match_marker_to_line(self, marker):
+        """Draw the selected point like the line's points, in white, or in magenta if the line
+        itself is close to white
+        """
+        line_pts = self.lasagna.returnIngredientByName(self.pts_name)
+        marker.symbol = line_pts.symbol
+        marker.symbolSize = line_pts.symbolSize
+        marker.alpha = line_pts.alpha
+        marker.color = navigation.highlight_color(line_pts.color)
 
     def addRemoveToggle(self):
         """
