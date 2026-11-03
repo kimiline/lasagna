@@ -17,7 +17,7 @@ from lasagna import lasagna_mainWindow, lasagna_axis, ingredients
 from lasagna.io_libs import image_stack_loader
 from lasagna.ingredients.lasagna_ingredient import ROW_BACKGROUND
 from lasagna.plugins import plugin_handler
-from lasagna.utils import preferences, path_utils
+from lasagna.utils import navigation, preferences, path_utils
 from lasagna.utils.lasagna_qt_helper_functions import (
     find_pyqt_graph_object_name_in_plot_widget,
 )
@@ -395,6 +395,14 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
             pointsButtons.addWidget(button)
         self.verticalLayout_5.insertLayout(
             self.verticalLayout_5.indexOf(self.points_TreeView) + 1, pointsButtons)
+        # Clicking a layer in the list draws it in white; this box also moves the views to its first point
+        self.jumpToLayer_checkBox = QtWidgets.QCheckBox("Jump to selected layer")
+        self.jumpToLayer_checkBox.setChecked(True)
+        self.jumpToLayer_checkBox.setToolTip(
+            "When you select one layer in the list, move the three views to its first point")
+        self.verticalLayout_5.insertWidget(
+            self.verticalLayout_5.indexOf(self.points_TreeView) + 2, self.jumpToLayer_checkBox)
+        self.highlightedPointsLayers = {}  # name: (colour before highlighting, highlight colour)
         self.points_TreeView.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.points_TreeView.customContextMenuRequested.connect(self.layersMenuPoints)
         self.points_TreeView.selectionModel().selectionChanged[
@@ -1203,6 +1211,8 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
         if not self.ingredientList:
             return
 
+        self.highlightSelectedPointsLayers()
+
         name = self.selectedPointsName()
         ingredient = self.returnIngredientByName(name)
         if not ingredient:
@@ -1218,6 +1228,39 @@ class Lasagna(QMainWindow, lasagna_mainWindow.Ui_lasagna_mainWindow):
                 spinBox.blockSignals(True)
                 spinBox.setValue(value)
                 spinBox.blockSignals(False)
+
+    def highlightSelectedPointsLayers(self):
+        """
+        Draw the layers the user selected in the points list in white (magenta if a layer is
+        near-white) and, if "Jump to selected layer" is ticked and one layer is selected, move the
+        views to its first point. Selections made by code, such as a newly added layer becoming
+        selected, only remove the previous highlight.
+        """
+        # Restore the colours of the layers highlighted last time, unless they were changed since
+        for name, (original, shown) in self.highlightedPointsLayers.items():
+            ingredient = self.returnIngredientByName(name)
+            if ingredient and ingredient.color == shown:
+                ingredient.color = original
+        self.highlightedPointsLayers = {}
+
+        if self.points_TreeView.hasFocus():  # The user clicked or used the arrow keys in the list
+            selected = [self.returnIngredientByName(index.data())
+                        for index in self.points_TreeView.selectedIndexes()]
+            selected = [ingredient for ingredient in selected if ingredient]
+            for ingredient in selected:
+                if not isinstance(ingredient.color, list):
+                    continue
+                shown = navigation.highlight_color(ingredient.color)
+                self.highlightedPointsLayers[ingredient.objectName] = (ingredient.color, shown)
+                ingredient.color = shown
+
+            if len(selected) == 1 and self.jumpToLayer_checkBox.isChecked():
+                data = selected[0].raw_data()
+                if data is not None and data is not False and len(data):
+                    navigation.jump_to_point(self, data[0])
+                    return
+
+        self.update_2D_plot_ingredients_in_axes()
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     # Slots for axis tab
